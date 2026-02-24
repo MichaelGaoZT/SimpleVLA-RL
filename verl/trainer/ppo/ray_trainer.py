@@ -53,7 +53,7 @@ class Role(Enum):
 
 
 @dataclass
-class ResourcePoolManager:
+class ResourcePoolManager: # arrange trainning source for different roles, e.g. actor, rollout, critic, reward model, etc.
     """
     Define a resource pool specification. Resource pool will be initialized first.
     Mapping

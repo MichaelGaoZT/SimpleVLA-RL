@@ -37,21 +37,21 @@ class RobRewardManager():
 
     def verify(self, data):
         completes = data.batch['complete'].tolist()
-        batch_size = data.batch['responses'].size(0)
-        assert len(completes) == batch_size
+        batch_size = data.batch['responses'].size(0) # 理论上只有complete 才有response？
+        assert len(completes) == batch_size # why all trajs in batch needed be completed
         score = [float(item) for item in completes]
         format = [1.0 for _ in range(len(completes))]
 
-        data.batch['acc'] = torch.tensor(score, dtype=torch.float32, device=data.batch['responses'].device)
+        data.batch['acc'] = torch.tensor(score, dtype=torch.float32, device=data.batch['responses'].device) # acc
         data.batch['format_correctness'] = torch.tensor(format, dtype=torch.float32, device=data.batch['responses'].device)
         
         reward_metrics = {}
         format_metrics = {}
         reward_format_metrics = {}
             
-        reward_metrics['all'] = data.batch['acc'].mean().item()
-        format_metrics['all'] = data.batch['format_correctness'].mean().item()
-        reward_format_metrics['all'] = data.batch['acc'].mean().item()
+        reward_metrics['all'] = data.batch['acc'].mean().item() # avg_acc
+        format_metrics['all'] = data.batch['format_correctness'].mean().item() # avg_format_correctness == 1
+        reward_format_metrics['all'] = data.batch['acc'].mean().item() # avgh_acc
 
         return score, reward_metrics, format_metrics, reward_format_metrics
 
@@ -61,13 +61,14 @@ class RobRewardManager():
 
         reward_tensor_dict={}
         reward_metrics={}
-        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32) # batch * 64 * 56
-        verifier_reward=torch.zeros_like(data.batch['responses'], dtype=torch.float32)
-        reward_tensor = reward_tensor.reshape((reward_tensor.shape[0],-1))
+        reward_tensor = torch.zeros_like(data.batch['responses'], dtype=torch.float32) # batch * 64 * 56 # batch*seq_num*seq_len?
+        verifier_reward = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
+        reward_tensor = reward_tensor.reshape((reward_tensor.shape[0],-1)) # why flatten reward?
         verifier_reward = verifier_reward.reshape((verifier_reward.shape[0],-1))
         
-        valid_response_length = data.batch['finish_step'] * self.config.actor_rollout_ref.model.action_token_len 
-       
+        valid_response_length = data.batch['finish_step'] * self.config.actor_rollout_ref.model.action_token_len # action_token_len = 7
+
+        # 直接使用acc或计算verifier_score
         if 'acc' in data.batch:
             # the separated rewards have been logged; now we add format correctness back for reward shaping
             #verifier_score = data.batch['acc'].cpu().numpy().tolist() + (0.0 * data.batch['format_correctness'].cpu().numpy()).tolist()
@@ -78,7 +79,7 @@ class RobRewardManager():
         for i in range(verifier_reward.shape[0]):
             verifier_reward[i,valid_response_length[i]-1] += verifier_score[i]
             
-        reward_tensor_dict['gt_scores'] = verifier_reward
+        reward_tensor_dict['gt_scores'] = verifier_reward # gt_scores = verifier_score = 1
 
         # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
         # if 'rm_scores' in data.batch.keys():
@@ -88,13 +89,14 @@ class RobRewardManager():
         #     if self.config.reward_model.rm_coef!=0:
         #         reward_tensor += self.config.reward_model.rm_coef * reward_tensor_dict['rm_scores']
 
-        if self.config.verifier.reward_coef!=0:
-            
-            reward_metrics['verifier'] = reward_tensor_dict['gt_scores'].sum(dim=1).mean().item()
-            reward_tensor += self.config.verifier.reward_coef * reward_tensor_dict['gt_scores']
+        if self.config.verifier.reward_coef!=0: # 5
 
+            reward_metrics['verifier'] = reward_tensor_dict['gt_scores'].sum(dim=1).mean().item() # ==1?
+            reward_tensor += self.config.verifier.reward_coef * reward_tensor_dict['gt_scores'] # reward += 5*GT_SCORES
+
+        # reward shape = batch * seq_num * seq_len (batch*64*56)
         reward_tensor_dict['all'] = reward_tensor
-        reward_metrics['reward_all'] = reward_tensor.sum(dim=-1).mean(dim=0).item()
+        reward_metrics['reward_all'] = reward_tensor.sum(dim=-1).mean(dim=0).item() # sum reward per steps in each seq, and mean in batch-dim
 
         return reward_tensor_dict, reward_metrics
 
@@ -116,7 +118,7 @@ def main(config):
     ray.get(main_task.remote(config))
 
 
-@ray.remote
+@ray.remote # Ray是用于分布式计算的框架，在VERL中用于并行化PPO训练任务
 def main_task(config):
     from verl.utils.fs import copy_local_path_from_hdfs
     from transformers import AutoTokenizer
